@@ -1,5 +1,7 @@
 # ECG Anomaly Detection using Autoencoders and LSTM Networks
 
+Repo: https://github.com/HarshitaSobhani/ECG-Anomaly-Detection-using-autoencoder
+
 Detects abnormal heartbeats in the ECG5000 dataset by training autoencoders **only on normal
 ECG sequences**, then flagging anomalies via reconstruction error. Includes a plain Dense
 autoencoder baseline and a sequence-aware LSTM autoencoder.
