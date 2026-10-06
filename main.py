@@ -8,6 +8,7 @@ plots to ./output/.
 This mirrors ecg_anomaly_detection.ipynb; see EXPLANATION.md for the
 theory behind each step.
 """
+import json
 import os
 import random
 
@@ -23,15 +24,35 @@ from src.evaluate import (
     reconstruction_error, pick_threshold, classify, compute_metrics, compute_roc,
 )
 
+# --- Configuration ---
 SEED = 42
 OUTPUT_DIR = "output"
+TEST_SIZE = 0.2          # fraction of NORMAL beats held out for testing
+VALIDATION_SPLIT = 0.1   # fraction of normal training data used for validation
+DENSE_EPOCHS, DENSE_BATCH_SIZE = 100, 128
+LSTM_EPOCHS, LSTM_BATCH_SIZE = 100, 64
 
 
-def set_seeds(seed=SEED):
+def set_seeds(seed: int = SEED) -> None:
+    """Seed Python/NumPy/TensorFlow and request deterministic TF ops.
+
+    Exact numbers can still differ slightly across hardware/TF versions.
+    """
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
-    tf.random.set_seed(seed)
+    tf.keras.utils.set_random_seed(seed)
+    tf.config.experimental.enable_op_determinism()
+
+
+def print_report(name, threshold, metrics, roc_auc):
+    print(f"\n--- {name} ---")
+    print(f"Threshold: {threshold:.4f}")
+    for k in ("accuracy", "precision", "recall", "f1"):
+        print(f"{k}: {metrics[k]:.4f}")
+    print(f"AUC: {roc_auc:.4f}")
+    print("Confusion matrix (rows=true, cols=pred; order: abnormal, normal):")
+    print(metrics["confusion_matrix"])
 
 
 def main():
@@ -39,7 +60,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("Loading ECG5000 dataset...")
-    normal_train, test_data, test_labels, normal_data, abnormal_data = load_dataset(seed=SEED)
+    normal_train, test_data, test_labels, normal_data, abnormal_data = load_dataset(seed=SEED, test_size=TEST_SIZE)
     n_timesteps = normal_train.shape[1]
     print(f"Train (normal only): {normal_train.shape}, Test: {test_data.shape}")
 
@@ -47,8 +68,8 @@ def main():
     print("\nTraining Dense autoencoder...")
     dense_ae = build_dense_autoencoder(n_timesteps)
     dense_history = dense_ae.fit(
-        normal_train, normal_train, epochs=100, batch_size=128,
-        validation_split=0.1, shuffle=True, verbose=0,
+        normal_train, normal_train, epochs=DENSE_EPOCHS, batch_size=DENSE_BATCH_SIZE,
+        validation_split=VALIDATION_SPLIT, shuffle=True, verbose=0,
     )
     print(f"Final Dense AE val_loss: {dense_history.history['val_loss'][-1]:.4f}")
 
@@ -59,12 +80,12 @@ def main():
 
     lstm_ae = build_lstm_autoencoder(n_timesteps)
     lstm_history = lstm_ae.fit(
-        normal_train_lstm, normal_train_lstm, epochs=100, batch_size=64,
-        validation_split=0.1, shuffle=True, verbose=0,
+        normal_train_lstm, normal_train_lstm, epochs=LSTM_EPOCHS, batch_size=LSTM_BATCH_SIZE,
+        validation_split=VALIDATION_SPLIT, shuffle=True, verbose=0,
     )
     print(f"Final LSTM AE val_loss: {lstm_history.history['val_loss'][-1]:.4f}")
 
-    # --- Thresholds (from training-set reconstruction error only) ---
+    # --- Thresholds (from NORMAL training reconstruction error only; no test labels) ---
     dense_train_errors = reconstruction_error(dense_ae, normal_train)
     dense_test_errors = reconstruction_error(dense_ae, test_data)
     dense_threshold = pick_threshold(dense_train_errors)
@@ -83,17 +104,17 @@ def main():
     dense_fpr, dense_tpr, dense_auc = compute_roc(test_labels, dense_test_errors)
     lstm_fpr, lstm_tpr, lstm_auc = compute_roc(test_labels, lstm_test_errors)
 
-    print("\n--- Dense Autoencoder ---")
-    print(f"Threshold: {dense_threshold:.4f}")
-    for k in ("accuracy", "precision", "recall", "f1"):
-        print(f"{k}: {dense_metrics[k]:.4f}")
-    print(f"AUC: {dense_auc:.4f}")
+    print_report("Dense Autoencoder", dense_threshold, dense_metrics, dense_auc)
+    print_report("LSTM Autoencoder", lstm_threshold, lstm_metrics, lstm_auc)
 
-    print("\n--- LSTM Autoencoder ---")
-    print(f"Threshold: {lstm_threshold:.4f}")
-    for k in ("accuracy", "precision", "recall", "f1"):
-        print(f"{k}: {lstm_metrics[k]:.4f}")
-    print(f"AUC: {lstm_auc:.4f}")
+    results = {}
+    for name, thr, m, a_ in (("dense", dense_threshold, dense_metrics, dense_auc),
+                             ("lstm", lstm_threshold, lstm_metrics, lstm_auc)):
+        results[name] = {"threshold": thr, "auc": float(a_),
+                         **{k: float(m[k]) for k in ("accuracy", "precision", "recall", "f1")},
+                         "confusion_matrix": m["confusion_matrix"].tolist()}
+    with open(f"{OUTPUT_DIR}/metrics.json", "w") as f:
+        json.dump(results, f, indent=2)
 
     # --- Plots ---
     plt.figure(figsize=(7, 4))

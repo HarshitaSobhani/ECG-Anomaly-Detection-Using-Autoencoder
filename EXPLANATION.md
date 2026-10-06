@@ -13,10 +13,12 @@ plus a label in the last column: `1` = normal, `2`-`5` = different kinds of abno
 2. Splits each row into a 140-value sequence + a binary label (`1` if original label was `1`,
    else `0`) — we collapse all abnormal subtypes into one class since the goal is binary
    normal-vs-anomaly detection, not multi-class diagnosis.
-3. Min-max scales every value into `[0, 1]` using the global min/max across the whole dataset,
-   so the autoencoder doesn't have to deal with an arbitrary raw amplitude range.
-4. Splits the **normal** sequences into a train/test portion. Abnormal sequences are **never**
-   included in training — they only appear in the returned `test_data`/`test_labels`.
+3. Splits the **normal** sequences (raw, unscaled) into 80% train / 20% held-out normal test.
+   Abnormal sequences are **never** included in training — they only appear in `test_data`.
+4. Fits min-max scaling (`fit_min_max`) on the **normal training split only**, then applies those
+   same min/max values to train, held-out normal and abnormal data (no leakage). Test values can
+   therefore fall slightly outside `[0, 1]`; they are not clipped. (An earlier version computed
+   min/max on the whole dataset before splitting; this was corrected.)
 
 This last point is the core trick of the whole project, explained in Section 3.
 
@@ -31,9 +33,9 @@ value independently.
 
 ### Dense autoencoder
 `build_dense_autoencoder()` builds a plain fully-connected encoder/decoder:
-`140 → 64 → 32 → 16` (encoder) and `16 → 32 → 64 → 140` (decoder). It treats the 140 values as
-an unordered feature vector — it has no built-in concept of "this value comes right after that
-one." It can only learn statistical relationships between fixed positions in the vector.
+`140 → 64 → 32 → 16` (encoder) and `16 → 32 → 64 → 140` (decoder). The Dense
+Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly model
+temporal dependencies between consecutive time steps.
 
 ### LSTM autoencoder
 `build_lstm_autoencoder()` instead treats the input as a genuine time series:
@@ -90,20 +92,29 @@ measure of how well each model's error distributions separate normal from abnorm
 
 ## 5. Actual results from a full run
 
+Produced by `python3 main.py` (seed 42, TensorFlow deterministic ops, CPU), saved in
+`output/metrics.json`. Abnormal is the positive class.
+
 | Metric | Dense AE | LSTM AE |
 |---|---|---|
-| Threshold | 0.0137 | 0.0234 |
-| Accuracy | 0.9775 | 0.9771 |
-| Precision (abnormal) | 0.9742 | 0.9755 |
-| Recall (abnormal) | 0.9976 | 0.9957 |
-| F1 (abnormal) | 0.9857 | 0.9855 |
-| AUC | 0.9905 | 0.9740 |
+| Threshold | 0.0187 | 0.0392 |
+| Accuracy | 0.9752 | 0.8306 |
+| Precision (abnormal) | 0.9714 | 0.9700 |
+| Recall (abnormal) | 0.9976 | 0.8081 |
+| F1 (abnormal) | 0.9843 | 0.8817 |
+| AUC | 0.9894 | 0.9241 |
 
-On this particular dataset/run, the Dense AE actually edges out the LSTM AE slightly. ECG5000's
-heartbeats are short, pre-segmented, and denoised, so the "shape" of a normal beat is largely
-captured by *which values occur*, not just *their order* — reducing the LSTM's usual advantage.
-On noisier, more temporally complex signals, the ordering-aware LSTM would be expected to pull
-ahead more clearly (see the notebook's Conclusion section for the full theoretical argument).
+Confusion matrices (rows = true, columns = predicted; order abnormal, normal):
+Dense `[[2074, 5], [61, 523]]`, LSTM `[[1680, 399], [52, 532]]`.
+
+**Dense vs LSTM.** In this run the Dense AE clearly outperforms the LSTM AE. The LSTM's final
+validation MAE (0.0305) is also much higher than the Dense AE's (0.0130), i.e. the LSTM
+reconstructs normal beats less well, so its `mean + std` threshold (0.0392) is high and it
+misses many abnormal beats (recall 0.81). Earlier README numbers (LSTM accuracy
+≈ 0.977, AUC ≈ 0.974) came from an older version (global scaling, non-deterministic run) and
+were **not** reproduced after the leakage fix and determinism changes. LSTM training with `relu`
+activations is sensitive to initialization, so results from a single seed are not conclusive; no
+tuning was done to improve the numbers. We therefore make **no claim that LSTM beats Dense**.
 
 ## 6. `main.py` — orchestration
 

@@ -1,6 +1,6 @@
 # ECG Anomaly Detection using Autoencoders and LSTM Networks
 
-Repo: https://github.com/HarshitaSobhani/ECG-Anomaly-Detection-using-autoencoder
+Repo: https://github.com/HarshitaSobhani/ECG-Anomaly-Detection-Using-Autoencoder
 
 Detects abnormal heartbeats in the ECG5000 dataset by training autoencoders **only on normal
 ECG sequences**, then flagging anomalies via reconstruction error. Includes a plain Dense
@@ -13,8 +13,9 @@ method work.
 
 - `ecg_anomaly_detection.ipynb` — full lab notebook: theory, code, plots, evaluation, conclusion.
 - `main.py` — runnable end-to-end script version (same pipeline as the notebook).
-- `src/data.py` — download, normalize, and split the ECG5000 dataset.
+- `src/data.py` — download, split, normalize (train-fitted), and prepare the ECG5000 dataset.
 - `src/models.py` — Dense and LSTM autoencoder architectures.
+- `build_notebook.py` — regenerates the notebook (outputs are not stored; run it to see results).
 - `src/evaluate.py` — reconstruction error, thresholding, metrics, ROC/AUC.
 
 ## Dataset
@@ -37,7 +38,7 @@ pip install -r requirements.txt
 ```bash
 python3 main.py
 ```
-Trains both autoencoders, prints metrics for each, and saves loss curves + a combined ROC plot
+Trains both autoencoders, prints metrics, and saves loss curves, ROC plot and metrics.json
 to `./output/`.
 
 **As a notebook:**
@@ -56,19 +57,38 @@ notebook) and Runtime -> Run all — no local setup required.
    reconstruction error.
 4. Threshold the error (`mean + std` of normal training error) to classify anomalies.
 
-## Results (example run)
+## Preprocessing and thresholds (no leakage)
+
+Normal beats are split 80/20 (train / held-out). Min-max scaling is fitted on the normal
+training split only and reused for all other data. The threshold per model is
+`mean + std` of that model's reconstruction error on the normal training data; test labels are
+never used for preprocessing or thresholding. Label convention: `1` = normal, `0` = abnormal
+(positive class for precision/recall/F1/ROC).
+
+## Results (actual run of `python3 main.py`, seed 42)
 
 | Metric | Dense AE | LSTM AE |
 |---|---|---|
-| Accuracy | 0.9775 | 0.9771 |
-| Precision (abnormal) | 0.9742 | 0.9755 |
-| Recall (abnormal) | 0.9976 | 0.9957 |
-| F1 (abnormal) | 0.9857 | 0.9855 |
-| AUC | 0.9905 | 0.9740 |
+| Threshold | 0.0187 | 0.0392 |
+| Accuracy | 0.9752 | 0.8306 |
+| Precision (abnormal) | 0.9714 | 0.9700 |
+| Recall (abnormal) | 0.9976 | 0.8081 |
+| F1 (abnormal) | 0.9843 | 0.8817 |
+| AUC | 0.9894 | 0.9241 |
 
-Numbers vary slightly run to run despite fixed seeds (TensorFlow's GPU/CPU nondeterminism in
-some ops). See `EXPLANATION.md` for why these two architectures perform the way they do on this
-dataset, and the notebook's Conclusion section for limitations.
+Dense outperforms LSTM in this run. Earlier reported numbers (≈97.7% for both) came from a
+pipeline that scaled before splitting and were not reproduced after the fix; see
+`EXPLANATION.md` Section 5. Exact numbers may vary slightly with hardware / library version
+even with fixed seeds and deterministic ops, and LSTM results can vary notably with the seed.
+Metrics are saved to `output/metrics.json`.
+
+## Limitations and future work
+
+Single seed and split; threshold is a simple heuristic; abnormal subclasses are merged; no
+hyperparameter search; ECG5000 is clean and pre-segmented. Future: multiple seeds, per-class
+analysis, validation-based thresholds, convolutional/variational autoencoders.
+
+**Disclaimer:** experimental/educational project, not a clinical diagnostic system.
 
 ## License
 
