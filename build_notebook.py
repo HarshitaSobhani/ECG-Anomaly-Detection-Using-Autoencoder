@@ -60,8 +60,10 @@ test set to evaluate performance.
 
 ### 1.2 Imports and reproducibility
 
-We fix random seeds for NumPy, Python, and TensorFlow so that results are reproducible across
-runs.
+We fix random seeds for NumPy, Python, and TensorFlow and enable deterministic TensorFlow ops.
+Exact numbers can still vary slightly across hardware / TensorFlow versions.
+
+> This is an experimental, educational project -- not a clinical diagnostic system.
 """)
 
 code("""\
@@ -82,7 +84,8 @@ SEED = 42
 os.environ['PYTHONHASHSEED'] = str(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
-tf.random.set_seed(SEED)
+tf.keras.utils.set_random_seed(SEED)
+tf.config.experimental.enable_op_determinism()
 
 print("TensorFlow version:", tf.__version__)
 """)
@@ -120,63 +123,61 @@ print("Abnormal count:", (binary_labels == 0).sum())
 """)
 
 md("""\
-### 1.4 Normalize (min-max scaling)
+### 1.4 Train/test split of the *normal* data
 
-Autoencoders train more reliably when inputs are on a bounded, consistent scale. We use
-min-max scaling based on statistics computed **per sequence's global min/max across the whole
-dataset** (a single scaler fit on the raw values), mapping values into `[0, 1]`.
-
-We compute min/max **before** splitting into train/test to keep this a simple, standard
-preprocessing step — the values here reflect general ECG signal magnitude, not label
-information, so this does not leak target information.
-""")
-
-code("""\
-data_min = sequences.min()
-data_max = sequences.max()
-
-def min_max_scale(x, x_min=data_min, x_max=data_max):
-    return (x - x_min) / (x_max - x_min)
-
-scaled_sequences = min_max_scale(sequences)
-print("Scaled min/max:", scaled_sequences.min(), scaled_sequences.max())
-""")
-
-md("""\
-### 1.5 Train/test split — normal-only training set
-
-This is the key step for the unsupervised setup:
-
-- Split the **normal** sequences into a train and test portion.
-- The **abnormal** sequences are held out entirely from training and only appear in the test set.
-- The autoencoders will therefore *never* see an abnormal heartbeat, or even a label, during
-  training — training is done purely by reconstruction on normal data.
-- The final test set (used only for evaluation) contains a mix of normal + abnormal sequences
-  with their true labels, so we can measure precision/recall/F1/ROC etc.
+- The **normal** sequences are split into a training part (80%) and a held-out part (20%).
+- The **abnormal** sequences are kept completely out of training; they only appear in the test set.
+- The split happens on the **raw** data *before* normalization, so the scaler can be fitted on
+  training data only (see 1.5).
 """)
 
 code("""\
 normal_mask = binary_labels == 1
 abnormal_mask = binary_labels == 0
 
-normal_data = scaled_sequences[normal_mask]
-abnormal_data = scaled_sequences[abnormal_mask]
+raw_normal = sequences[normal_mask]
+raw_abnormal = sequences[abnormal_mask]
 
-# Split normal data: most goes to training, a held-out slice joins the test set
-normal_train, normal_test = train_test_split(
-    normal_data, test_size=0.2, random_state=SEED
+raw_normal_train, raw_normal_test = train_test_split(
+    raw_normal, test_size=0.2, random_state=SEED
 )
+print("Normal train:", raw_normal_train.shape, "| held-out normal:", raw_normal_test.shape)
+print("Abnormal (test only):", raw_abnormal.shape)
+""")
+
+md("""\
+### 1.5 Normalize (min-max scaling, fitted on training data only)
+
+Autoencoders train more reliably on bounded inputs, and the decoder ends in a sigmoid, so
+outputs live in `[0, 1]`. To avoid **data leakage**, the min and max are computed from the
+**normal training split only** and then re-used unchanged for the held-out normal and abnormal
+data. Consequently, test values may fall slightly outside `[0, 1]` -- that is expected and is
+left as is (no clipping).
+""")
+
+code("""\
+data_min = raw_normal_train.min()
+data_max = raw_normal_train.max()
+
+def min_max_scale(x, x_min=data_min, x_max=data_max):
+    return (x - x_min) / (x_max - x_min)
+
+normal_train = min_max_scale(raw_normal_train)
+normal_test = min_max_scale(raw_normal_test)
+abnormal_data = min_max_scale(raw_abnormal)
+normal_data = min_max_scale(raw_normal)   # all normal beats, used only for plotting
 
 # Final test set = held-out normal + all abnormal sequences
 test_data = np.concatenate([normal_test, abnormal_data], axis=0)
 test_labels = np.concatenate([
-    np.ones(len(normal_test), dtype="int32"),   # 1 = normal
+    np.ones(len(normal_test), dtype="int32"),    # 1 = normal
     np.zeros(len(abnormal_data), dtype="int32")  # 0 = abnormal
 ])
 
+print("Train min/max:", normal_train.min(), normal_train.max())
 print("Training set (normal only):", normal_train.shape)
 print("Test set (normal + abnormal):", test_data.shape)
-print("Test set normal/abnormal counts:", np.bincount(test_labels))
+print("Test set counts [abnormal, normal]:", np.bincount(test_labels))
 """)
 
 md("""\
@@ -225,9 +226,9 @@ reconstruct it back to 140 values.
 - **Loss**: Mean Absolute Error (MAE) between input and reconstruction — this is also the
   anomaly score we'll use later.
 
-Because dense layers have no notion of sequence order, this model can only exploit
-value-magnitude patterns, not temporal dependencies — it serves as our baseline to compare
-against the LSTM autoencoder.
+Because dense layers have no notion of sequence order, this model treats the 140 values as
+independent input positions — it serves as our baseline to compare against the LSTM autoencoder.
+Output activation is sigmoid because the scaled inputs lie (approximately) in `[0, 1]`.
 """)
 
 code("""\
@@ -256,7 +257,8 @@ md("""\
 ### Training
 
 We train on `normal_train` only, reconstructing the same data as the target
-(`autoencoder(x) ≈ x`), holding out a validation split to monitor for overfitting.
+(`autoencoder(x) ≈ x`). Keras' `validation_split=0.1` takes the last 10% of `normal_train`
+(normal beats only) to monitor overfitting. Abnormal data is never used here.
 """)
 
 code("""\
@@ -307,10 +309,10 @@ temporal dependencies — making it a natural fit for this data.
 - **Loss**: MAE, same as the dense model, so reconstruction errors are directly comparable
   between the two architectures.
 
-Because the LSTM path preserves the order and lets each time step's reconstruction depend on
-learned temporal context, we expect it to model normal heartbeat *rhythm* more faithfully than
-the dense model — and therefore to produce a sharper separation between normal and abnormal
-reconstruction errors.
+Because the LSTM path preserves order, it can in principle model temporal structure that the
+dense model ignores. Whether this actually helps on ECG5000 is an empirical question answered
+by the results in Section 4 (not assumed in advance). Both LSTM layers use `relu` activation
+(Keras default is `tanh`) as in the original experiment.
 """)
 
 code("""\
@@ -381,8 +383,8 @@ struggles to reconstruct (high error) are flagged as anomalies.
 
 **Threshold selection**: we set the decision threshold using only the **training** distribution
 of normal reconstruction errors: `threshold = mean(normal_train_errors) + std(normal_train_errors)`.
-This keeps the threshold selection independent of the test labels (avoiding label leakage) while
-still being grounded in what "normal" reconstruction error looks like.
+Each model gets its own threshold because their error distributions differ. No test data or
+test labels are used to choose it (avoiding leakage), and it is not tuned on the test set.
 
 A test sequence is classified as **anomaly** if its reconstruction error exceeds this threshold.
 """)
@@ -485,7 +487,9 @@ md("""\
 
 The ROC curve sweeps the anomaly threshold across all possible values and plots the true
 positive rate vs. false positive rate for detecting the abnormal class — this gives a
-threshold-independent view of each model's separative power, summarized by the AUC.
+threshold-independent view of each model's separative power, summarized by the AUC. The raw
+reconstruction error is used as the anomaly score (higher error = more anomalous) with
+"abnormal" as the positive class; scores are not altered in any way.
 """)
 
 code("""\
@@ -582,42 +586,44 @@ plt.show()
 # ---------------------------------------------------------------------------
 # Section 6: Conclusion
 # ---------------------------------------------------------------------------
+code("""\
+# Data-driven summary: derived from the metrics computed above, nothing hardcoded
+for metric, d, l in [("AUC", dense_auc, lstm_auc),
+                     ("F1 (abnormal)", dense_metrics["f1"], lstm_metrics["f1"]),
+                     ("Recall (abnormal)", dense_metrics["recall"], lstm_metrics["recall"])]:
+    better = "Dense" if d > l else "LSTM" if l > d else "Neither"
+    print(f"{metric}: Dense={d:.4f}  LSTM={l:.4f}  -> higher: {better}")
+""")
+
 md("""\
 ## 6. Conclusion
 
-**Summary.** Both autoencoders were trained exclusively on normal ECG heartbeats and used
-reconstruction error as an anomaly score. Comparing the metrics and ROC/AUC above, the **LSTM
-autoencoder is expected to outperform (or at least match) the Dense autoencoder** at separating
-normal from abnormal beats, with a higher AUC and tighter clustering of normal reconstruction
-errors below the threshold.
+**Summary.** Both autoencoders were trained exclusively on normal ECG heartbeats, with the
+scaler and the threshold derived from normal training data only, and reconstruction error was
+used as the anomaly score. The summary cell above states which model scored higher on each
+metric for *this run*. We do **not** assume the LSTM is better; differences of a fraction of a
+percent come from a single seed / single split and may not be significant.
 
-**Why LSTMs suit this task theoretically.** An ECG heartbeat is not just a bag of 140 independent
-values — it is a *temporal signal* with a specific ordered structure (P wave → QRS complex → T
-wave). A dense autoencoder must learn this structure indirectly, purely from the co-occurrence
-of values at fixed positions in the flattened vector, with no explicit notion of "before" and
-"after." An LSTM, by contrast, processes the sequence step-by-step and maintains a hidden state
-that is explicitly updated based on **temporal order and prior context**. This lets it learn the
-notion of a normal cardiac *rhythm* — how one part of the waveform should transition into the
-next — rather than just the marginal distribution of values at each position. Consequently, when
-an abnormal heartbeat disrupts this rhythm (irregular timing, missing/extra beats, distorted
-transitions), the LSTM's reconstruction is more likely to break down noticeably, giving a
-sharper, more reliable separation in reconstruction error between normal and abnormal classes.
+**Why the LSTM does not necessarily win here.** An LSTM can model temporal order, which is
+attractive for ECG, but ECG5000 beats are short (140 steps), pre-segmented and aligned, so
+position-wise patterns are already informative for a Dense network. The LSTM is also harder to
+optimize and slower to train.
 
 **Limitations.**
-- **Threshold sensitivity**: the anomaly decision boundary (`mean + std` of training
-  reconstruction error) is a simple heuristic. Different thresholds trade off precision and
-  recall, and a more principled choice (e.g. optimizing F1 on a validation set, or using a
-  percentile-based threshold) could shift results meaningfully.
-- **Dataset simplicity**: ECG5000 sequences are already pre-segmented, fixed-length (140 steps),
-  and denoised/pre-processed heartbeats. Real-world clinical ECG monitoring involves continuous,
-  noisy, variable-length streams with many more failure modes, so these results should not be
-  read as clinical-grade performance.
-- **Single-class collapse**: we collapsed 4 distinct abnormal ECG classes (labels 2–5) into a
-  single "abnormal" bucket. Some of these anomaly types may be far easier or harder to detect
-  than others; a class-wise breakdown could reveal blind spots hidden in the aggregate metrics.
-- **No hyperparameter search**: bottleneck size, number of layers, and learning rate were fixed
-  by convention rather than tuned, so absolute performance numbers likely have headroom left on
-  the table for both architectures.
+- **Threshold sensitivity**: `mean + std` of normal training error is a simple heuristic; with
+  it, some normal beats are always flagged (false positives). Other choices (percentile,
+  validation-tuned) trade precision and recall differently.
+- **Test-set mix**: the test set is the 20% held-out normal beats plus *all* abnormal beats, so
+  accuracy and precision depend on that mix. Prefer recall, F1 and AUC.
+- **Dataset simplicity**: ECG5000 is pre-segmented and clean; results are **not** clinical-grade
+  and this is not a diagnostic system.
+- **Single-class collapse**: abnormal labels 2-5 are merged; per-class detection is not analysed.
+- **Single run**: one seed and one split; no confidence intervals. No hyperparameter search.
+- **Reproducibility**: seeds fixed and deterministic ops enabled, but results may still differ
+  slightly across hardware / library versions.
+
+**Future improvements.** Multiple seeds / cross-validation, per-class analysis, validation-based
+threshold selection, convolutional or variational autoencoders, noisier real-world ECG.
 """)
 
 nb["cells"] = cells
