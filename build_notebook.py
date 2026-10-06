@@ -226,8 +226,8 @@ reconstruct it back to 140 values.
 - **Loss**: Mean Absolute Error (MAE) between input and reconstruction — this is also the
   anomaly score we'll use later.
 
-Because dense layers have no notion of sequence order, this model treats the 140 values as
-independent input positions — it serves as our baseline to compare against the LSTM autoencoder.
+The Dense Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly
+model temporal dependencies between consecutive time steps. It serves as our baseline to compare against the LSTM autoencoder.
 Output activation is sigmoid because the scaled inputs lie (approximately) in `[0, 1]`.
 """)
 
