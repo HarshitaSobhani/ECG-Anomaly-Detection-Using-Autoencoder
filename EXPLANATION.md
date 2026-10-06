@@ -33,9 +33,9 @@ value independently.
 
 ### Dense autoencoder
 `build_dense_autoencoder()` builds a plain fully-connected encoder/decoder:
-`140 → 64 → 32 → 16` (encoder) and `16 → 32 → 64 → 140` (decoder). It treats the 140 values as
-an unordered feature vector — it has no built-in concept of "this value comes right after that
-one." It can only learn statistical relationships between fixed positions in the vector.
+`140 → 64 → 32 → 16` (encoder) and `16 → 32 → 64 → 140` (decoder). The Dense
+Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly model
+temporal dependencies between consecutive time steps.
 
 ### LSTM autoencoder
 `build_lstm_autoencoder()` instead treats the input as a genuine time series:

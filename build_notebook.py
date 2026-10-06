@@ -214,8 +214,8 @@ md("""\
 
 ### Theory
 
-A **dense autoencoder** treats the 140-step ECG sequence as a flat feature vector (ignoring
-temporal order) and learns to compress it through a narrow **bottleneck** layer, then
+A **dense autoencoder** treats the ECG as a fixed-length feature vector and does not
+explicitly model temporal dependencies between consecutive time steps, and learns to compress it through a narrow **bottleneck** layer, then
 reconstruct it back to 140 values.
 
 - **Encoder**: a stack of `Dense` layers that progressively reduce dimensionality
@@ -293,7 +293,7 @@ md("""\
 
 ECG signals are inherently **sequential** — the value at each time step depends on the
 trajectory leading up to it (the P wave, QRS complex, T wave, etc. all unfold in order). A
-dense autoencoder flattens this structure away. An **LSTM (Long Short-Term Memory)** network,
+dense autoencoder does not explicitly model this temporal structure. An **LSTM (Long Short-Term Memory)** network,
 by contrast, processes the sequence step-by-step and maintains a hidden state that captures
 temporal dependencies — making it a natural fit for this data.
 
