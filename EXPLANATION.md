@@ -81,19 +81,21 @@ Exact numbers can still vary slightly across hardware / library versions.
 
 ## 6. Actual results from a full run
 
-Produced by `python3 main.py` (seed 42, CPU), saved to `output/metrics.json`. Abnormal is the
+From the executed `ecg_anomaly_detection.ipynb` (seed 42). A `python3 main.py` run on one CPU gave
+very slightly different values (accuracy 0.9752, AUC 0.9894, saved to `output/metrics.json`), which
+is normal hardware / library variation. Abnormal is the
 positive class.
 
 | Metric | Dense AE |
 |---|---|
 | Threshold | 0.0187 |
-| Accuracy | 0.9752 |
-| Precision (abnormal) | 0.9714 |
-| Recall (abnormal) | 0.9976 |
-| F1 (abnormal) | 0.9843 |
-| AUC | 0.9894 |
+| Accuracy | 0.9756 |
+| Precision (abnormal) | 0.9737 |
+| Recall (abnormal) | 0.9957 |
+| F1 (abnormal) | 0.9845 |
+| AUC | 0.9892 |
 
-Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2074, 5], [61, 523]]`.
+Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2070, 9], [56, 528]]` (derived from the reported metrics and the 2663-beat test set, not printed by the notebook).
 
 These come from the pipeline with scaling fitted on normal training data only. Earlier
 documented numbers (Dense accuracy ≈ 0.9775, AUC ≈ 0.9905) came from the previous pipeline that

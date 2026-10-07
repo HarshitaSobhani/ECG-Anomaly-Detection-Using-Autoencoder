@@ -58,20 +58,22 @@ Trains the model, prints metrics and saves the loss curve, ROC plot and `metrics
 `./output/`. Notebook: `jupyter notebook ecg_anomaly_detection.ipynb` then Restart & Run All
 (or upload it to Google Colab).
 
-## Results (actual run of `python3 main.py`, seed 42)
+## Results (executed `ecg_anomaly_detection.ipynb`, seed 42)
 
 | Metric | Dense AE |
 |---|---|
 | Threshold | 0.0187 |
-| Accuracy | 0.9752 |
-| Precision (abnormal) | 0.9714 |
-| Recall (abnormal) | 0.9976 |
-| F1 (abnormal) | 0.9843 |
-| AUC | 0.9894 |
+| Accuracy | 0.9756 |
+| Precision (abnormal) | 0.9737 |
+| Recall (abnormal) | 0.9957 |
+| F1 (abnormal) | 0.9845 |
+| AUC | 0.9892 |
 
-Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2074, 5], [61, 523]]`.
+Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2070, 9], [56, 528]]` (derived from the reported metrics and the 2663-beat test set, not printed by the notebook).
 
-Exact numbers may vary slightly with hardware / library version even with fixed seeds and
+Running `python3 main.py` on one CPU gave very slightly different values (accuracy 0.9752,
+AUC 0.9894; saved to `output/metrics.json`). Exact numbers may vary slightly with hardware /
+library version even with fixed seeds and
 deterministic ops. These numbers come from the corrected train-fitted-scaling pipeline; older
 figures from the previous pipeline are superseded. Metrics are saved to `output/metrics.json`.
 
