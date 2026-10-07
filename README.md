@@ -8,7 +8,6 @@ normal ECG sequences**, then flagging anomalies via reconstruction error.
 ## Contents
 
 - `ecg_anomaly_detection.ipynb` — lab notebook: theory, code, plots, evaluation, conclusion.
-- `build_notebook.py` — regenerates the notebook (regenerates the notebook without outputs).
 - `main.py` — runnable end-to-end script (same pipeline as the notebook).
 - `src/data.py` — download, split, train-fitted min-max scaling, test-set construction.
 - `src/models.py` — Dense autoencoder.
@@ -58,10 +57,10 @@ Trains the model, prints metrics and saves the loss curve, ROC plot and `metrics
 `./output/`. Notebook: `jupyter notebook ecg_anomaly_detection.ipynb` then Restart & Run All
 (or upload it to Google Colab).
 
-## Results (executed `ecg_anomaly_detection.ipynb`, seed 42)
+## Results (latest run of `python3 main.py`, seed 42)
 
 | Metric | Dense AE |
-|---|---|
+|---|---:|
 | Threshold | 0.0187 |
 | Accuracy | 0.9756 |
 | Precision (abnormal) | 0.9737 |
@@ -69,11 +68,22 @@ Trains the model, prints metrics and saves the loss curve, ROC plot and `metrics
 | F1 (abnormal) | 0.9845 |
 | AUC | 0.9892 |
 
-Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2070, 9], [56, 528]]` (derived from the reported metrics and the 2663-beat test set, not printed by the notebook).
+Validation loss (final, MAE): 0.0128
 
-Running `python3 main.py` on one CPU gave very slightly different values (accuracy 0.9752,
-AUC 0.9894; saved to `output/metrics.json`). Exact numbers may vary slightly with hardware /
-library version even with fixed seeds and
+Confusion matrix (rows = true labels, columns = predicted labels; order = abnormal, normal):
+
+```
+[[2070,   9],
+ [  56, 528]]
+```
+
+True positives (abnormal caught) = 2070, false negatives = 9, false positives = 56,
+true negatives = 528.
+
+Saved inference artifacts from this run: `x_min = -7.090373992919922`,
+`x_max = 4.966413974761963`, threshold `0.018679914996027946`.
+
+Exact numbers may vary slightly with hardware / library version even with fixed seeds and
 deterministic ops. These numbers come from the corrected train-fitted-scaling pipeline; older
 figures from the previous pipeline are superseded. Metrics are saved to `output/metrics.json`.
 
