@@ -5,8 +5,6 @@ normal ECG sequences**, then flagging anomalies via reconstruction error.
 
 > Experimental / educational project. Not a clinical diagnostic system.
 
-See [`EXPLANATION.md`](EXPLANATION.md) for a full walkthrough.
-
 ## Contents
 
 - `ecg_anomaly_detection.ipynb` — lab notebook: theory, code, plots, evaluation, conclusion.
