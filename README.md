@@ -1,7 +1,5 @@
 # ECG Anomaly Detection using a Dense Autoencoder
 
-Repo: https://github.com/HarshitaSobhani/ECG-Anomaly-Detection-Using-Autoencoder
-
 Detects abnormal heartbeats in the ECG5000 dataset by training a Dense autoencoder **only on
 normal ECG sequences**, then flagging anomalies via reconstruction error.
 
