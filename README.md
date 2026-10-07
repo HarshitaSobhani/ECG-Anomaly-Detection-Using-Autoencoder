@@ -10,7 +10,7 @@ See [`EXPLANATION.md`](EXPLANATION.md) for a full walkthrough.
 ## Contents
 
 - `ecg_anomaly_detection.ipynb` — lab notebook: theory, code, plots, evaluation, conclusion.
-- `build_notebook.py` — regenerates the notebook (outputs are not stored; run it to see results).
+- `build_notebook.py` — regenerates the notebook (regenerates the notebook without outputs).
 - `main.py` — runnable end-to-end script (same pipeline as the notebook).
 - `src/data.py` — download, split, train-fitted min-max scaling, test-set construction.
 - `src/models.py` — Dense autoencoder.

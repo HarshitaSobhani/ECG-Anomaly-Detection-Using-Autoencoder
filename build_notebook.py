@@ -27,8 +27,6 @@ error** is used to flag anomalies: a model that has only ever seen normal beats 
 to reconstruct an abnormal one, producing a high error.
 
 **Dataset:** ECG5000 (140 time-steps per heartbeat, downloaded directly in this notebook).
-
-**Runs top-to-bottom in Google Colab with no manual steps.**
 """)
 
 # ---------------------------------------------------------------------------
