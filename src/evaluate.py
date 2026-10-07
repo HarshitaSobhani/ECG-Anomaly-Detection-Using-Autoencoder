@@ -6,15 +6,10 @@ from sklearn.metrics import (
 )
 
 
-def reconstruction_error(model, data_flat, model_input=None):
-    """Mean absolute error per sequence between original and reconstruction.
-
-    `model_input` lets LSTM models (which need a 3D input shape) be scored
-    while errors are still computed against the original flat sequences.
-    """
-    model_input = data_flat if model_input is None else model_input
-    reconstructions = model.predict(model_input, verbose=0).reshape(data_flat.shape)
-    return np.mean(np.abs(data_flat - reconstructions), axis=1)
+def reconstruction_error(model, data: np.ndarray) -> np.ndarray:
+    """Mean absolute error per sequence between original and reconstruction."""
+    reconstructions = model.predict(data, verbose=0)
+    return np.mean(np.abs(data - reconstructions), axis=1)
 
 
 def pick_threshold(train_errors: np.ndarray) -> float:

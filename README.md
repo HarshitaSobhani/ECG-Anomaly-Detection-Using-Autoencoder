@@ -1,28 +1,47 @@
-# ECG Anomaly Detection using Autoencoders and LSTM Networks
+# ECG Anomaly Detection using a Dense Autoencoder
 
 Repo: https://github.com/HarshitaSobhani/ECG-Anomaly-Detection-Using-Autoencoder
 
-Detects abnormal heartbeats in the ECG5000 dataset by training autoencoders **only on normal
-ECG sequences**, then flagging anomalies via reconstruction error. Includes a plain Dense
-autoencoder baseline and a sequence-aware LSTM autoencoder.
+Detects abnormal heartbeats in the ECG5000 dataset by training a Dense autoencoder **only on
+normal ECG sequences**, then flagging anomalies via reconstruction error.
 
-See [`EXPLANATION.md`](EXPLANATION.md) for a full walkthrough of how the code and the detection
-method work.
+> Experimental / educational project. Not a clinical diagnostic system.
+
+See [`EXPLANATION.md`](EXPLANATION.md) for a full walkthrough.
 
 ## Contents
 
-- `ecg_anomaly_detection.ipynb` — full lab notebook: theory, code, plots, evaluation, conclusion.
-- `main.py` — runnable end-to-end script version (same pipeline as the notebook).
-- `src/data.py` — download, split, normalize (train-fitted), and prepare the ECG5000 dataset.
-- `src/models.py` — Dense and LSTM autoencoder architectures.
+- `ecg_anomaly_detection.ipynb` — lab notebook: theory, code, plots, evaluation, conclusion.
 - `build_notebook.py` — regenerates the notebook (outputs are not stored; run it to see results).
+- `main.py` — runnable end-to-end script (same pipeline as the notebook).
+- `src/data.py` — download, split, train-fitted min-max scaling, test-set construction.
+- `src/models.py` — Dense autoencoder.
 - `src/evaluate.py` — reconstruction error, thresholding, metrics, ROC/AUC.
 
 ## Dataset
 
 [ECG5000](http://storage.googleapis.com/download.tensorflow.org/data/ecg.csv) — 4998
-heartbeats, 140 time steps each. Label `1` = normal, `2`-`5` = abnormal (collapsed to a single
-binary "abnormal" class here). Downloaded automatically by the code, no manual steps needed.
+heartbeats, 140 values each. Label `1` = normal, `2`-`5` = abnormal (merged into one binary
+"abnormal" class). Downloaded automatically.
+
+## Preprocessing (no leakage)
+
+Binary labels (`1` = normal, `0` = abnormal) → separate normal/abnormal → split normal beats
+80/20 into train / held-out test → min-max scaling fitted **only on normal training data** →
+the same min/max applied to the held-out normal and abnormal data. Test set = held-out normal +
+all abnormal. Test labels are only used for evaluation.
+
+## Model
+
+Dense autoencoder: `140 → 64 → 32 → 16 → 32 → 64 → 140`. ReLU hidden layers, sigmoid output,
+MAE loss, Adam. Trained on normal beats only: 100 epochs, batch size 128, 10% validation split.
+
+## Anomaly detection
+
+Anomaly score = reconstruction error `mean(|original - reconstructed|)` per ECG.
+`threshold = mean(normal training errors) + std(normal training errors)`.
+`error <= threshold` → normal, `error > threshold` → anomaly. Abnormal is the positive class
+for precision / recall / F1 / ROC.
 
 ## Setup
 
@@ -34,61 +53,36 @@ pip install -r requirements.txt
 
 ## Running it
 
-**As a script:**
 ```bash
 python3 main.py
 ```
-Trains both autoencoders, prints metrics, and saves loss curves, ROC plot and metrics.json
-to `./output/`.
-
-**As a notebook:**
-```bash
-jupyter notebook ecg_anomaly_detection.ipynb
-# then: Kernel -> Restart & Run All
-```
-Or open it directly in [Google Colab](https://colab.research.google.com) (File -> Upload
-notebook) and Runtime -> Run all — no local setup required.
-
-## Method (short version)
-
-1. Train an autoencoder to reconstruct ECG sequences, using **only normal heartbeats**.
-2. At test time, run both normal and abnormal heartbeats through the model.
-3. Abnormal heartbeats reconstruct poorly (the model never learned their shape) → high
-   reconstruction error.
-4. Threshold the error (`mean + std` of normal training error) to classify anomalies.
-
-## Preprocessing and thresholds (no leakage)
-
-Normal beats are split 80/20 (train / held-out). Min-max scaling is fitted on the normal
-training split only and reused for all other data. The threshold per model is
-`mean + std` of that model's reconstruction error on the normal training data; test labels are
-never used for preprocessing or thresholding. Label convention: `1` = normal, `0` = abnormal
-(positive class for precision/recall/F1/ROC).
+Trains the model, prints metrics and saves the loss curve, ROC plot and `metrics.json` to
+`./output/`. Notebook: `jupyter notebook ecg_anomaly_detection.ipynb` then Restart & Run All
+(or upload it to Google Colab).
 
 ## Results (actual run of `python3 main.py`, seed 42)
 
-| Metric | Dense AE | LSTM AE |
-|---|---|---|
-| Threshold | 0.0187 | 0.0392 |
-| Accuracy | 0.9752 | 0.8306 |
-| Precision (abnormal) | 0.9714 | 0.9700 |
-| Recall (abnormal) | 0.9976 | 0.8081 |
-| F1 (abnormal) | 0.9843 | 0.8817 |
-| AUC | 0.9894 | 0.9241 |
+| Metric | Dense AE |
+|---|---|
+| Threshold | 0.0187 |
+| Accuracy | 0.9752 |
+| Precision (abnormal) | 0.9714 |
+| Recall (abnormal) | 0.9976 |
+| F1 (abnormal) | 0.9843 |
+| AUC | 0.9894 |
 
-Dense outperforms LSTM in this run. Earlier reported numbers (≈97.7% for both) came from a
-pipeline that scaled before splitting and were not reproduced after the fix; see
-`EXPLANATION.md` Section 5. Exact numbers may vary slightly with hardware / library version
-even with fixed seeds and deterministic ops, and LSTM results can vary notably with the seed.
-Metrics are saved to `output/metrics.json`.
+Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2074, 5], [61, 523]]`.
+
+Exact numbers may vary slightly with hardware / library version even with fixed seeds and
+deterministic ops. These numbers come from the corrected train-fitted-scaling pipeline; older
+figures from the previous pipeline are superseded. Metrics are saved to `output/metrics.json`.
 
 ## Limitations and future work
 
-Single seed and split; threshold is a simple heuristic; abnormal subclasses are merged; no
-hyperparameter search; ECG5000 is clean and pre-segmented. Future: multiple seeds, per-class
-analysis, validation-based thresholds, convolutional/variational autoencoders.
-
-**Disclaimer:** experimental/educational project, not a clinical diagnostic system.
+The `mean + std` threshold is a simple heuristic computed on the training data; a
+validation-based threshold would be better. One seed and split, merged abnormal subclasses, no
+hyperparameter search, clean pre-segmented data. Future: validation threshold, multiple seeds,
+per-class analysis, convolutional / variational autoencoders.
 
 ## License
 

@@ -16,14 +16,13 @@ def code(src):
 # Title
 # ---------------------------------------------------------------------------
 md("""\
-# ECG Anomaly Detection using Autoencoders and LSTM Networks
+# ECG Anomaly Detection using a Dense Autoencoder
 
 **Deep Learning Lab Submission**
 
 This notebook detects abnormal heartbeats in ECG signals using **unsupervised anomaly detection**.
-Two autoencoder architectures — a plain Dense (fully-connected) autoencoder and an LSTM
-(sequence-aware) autoencoder — are trained **only on normal heartbeats**. At test time, both
-normal and abnormal heartbeats are fed through the trained models, and the **reconstruction
+A Dense (fully-connected) autoencoder is trained **only on normal heartbeats**. At test time,
+both normal and abnormal heartbeats are fed through the trained model, and the **reconstruction
 error** is used to flag anomalies: a model that has only ever seen normal beats will struggle
 to reconstruct an abnormal one, producing a high error.
 
@@ -210,7 +209,7 @@ plt.show()
 # Section 2: Dense Autoencoder
 # ---------------------------------------------------------------------------
 md("""\
-## 2. Baseline: Dense (Fully-Connected) Autoencoder
+## 2. Dense (Fully-Connected) Autoencoder
 
 ### Theory
 
@@ -227,7 +226,7 @@ reconstruct it back to 140 values.
   anomaly score we'll use later.
 
 The Dense Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly
-model temporal dependencies between consecutive time steps. It serves as our baseline to compare against the LSTM autoencoder.
+model temporal dependencies between consecutive time steps.
 Output activation is sigmoid because the scaled inputs lie (approximately) in `[0, 1]`.
 """)
 
@@ -284,96 +283,10 @@ plt.show()
 """)
 
 # ---------------------------------------------------------------------------
-# Section 3: LSTM Autoencoder
+# Section 3: Anomaly Detection & Evaluation
 # ---------------------------------------------------------------------------
 md("""\
-## 3. LSTM Autoencoder
-
-### Theory
-
-ECG signals are inherently **sequential** — the value at each time step depends on the
-trajectory leading up to it (the P wave, QRS complex, T wave, etc. all unfold in order). A
-dense autoencoder does not explicitly model this temporal structure. An **LSTM (Long Short-Term Memory)** network,
-by contrast, processes the sequence step-by-step and maintains a hidden state that captures
-temporal dependencies — making it a natural fit for this data.
-
-**Architecture (Seq2Seq-style autoencoder):**
-
-- **Encoder**: one or more `LSTM` layers read the 140-step sequence and compress it into a
-  single latent vector (the final hidden state) — analogous to the encoder's bottleneck in the
-  dense model, but built from sequence-aware units.
-- **Bridge**: a `RepeatVector` layer copies the latent vector once per output time step, turning
-  a single compressed vector into an input sequence the decoder can consume step-by-step.
-- **Decoder**: `LSTM` layer(s) process the repeated latent vector and, via a
-  `TimeDistributed(Dense(1))` layer, produce one reconstructed value per time step.
-- **Loss**: MAE, same as the dense model, so reconstruction errors are directly comparable
-  between the two architectures.
-
-Because the LSTM path preserves order, it can in principle model temporal structure that the
-dense model ignores. Whether this actually helps on ECG5000 is an empirical question answered
-by the results in Section 4 (not assumed in advance). Both LSTM layers use `relu` activation
-(Keras default is `tanh`) as in the original experiment.
-""")
-
-code("""\
-# LSTM layers expect input shape (samples, timesteps, features)
-normal_train_lstm = normal_train.reshape((normal_train.shape[0], n_timesteps, 1))
-test_data_lstm = test_data.reshape((test_data.shape[0], n_timesteps, 1))
-
-latent_dim = 16
-
-lstm_autoencoder = tf.keras.Sequential([
-    tf.keras.layers.Input(shape=(n_timesteps, 1)),
-    # Encoder
-    tf.keras.layers.LSTM(32, activation="relu", return_sequences=True),
-    tf.keras.layers.LSTM(latent_dim, activation="relu", return_sequences=False),
-    # Bridge: repeat the latent vector once per output time step
-    tf.keras.layers.RepeatVector(n_timesteps),
-    # Decoder
-    tf.keras.layers.LSTM(latent_dim, activation="relu", return_sequences=True),
-    tf.keras.layers.LSTM(32, activation="relu", return_sequences=True),
-    tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(1, activation="sigmoid")),
-], name="lstm_autoencoder")
-
-lstm_autoencoder.compile(optimizer="adam", loss="mae")
-lstm_autoencoder.summary()
-""")
-
-md("""\
-### Training
-
-Same protocol as the dense model — train on normal sequences only, reconstruct the input,
-monitor a validation split. LSTM autoencoders are more expensive per epoch than dense ones, so
-we use a smaller batch size that tends to work well for recurrent layers.
-""")
-
-code("""\
-lstm_history = lstm_autoencoder.fit(
-    normal_train_lstm, normal_train_lstm,
-    epochs=100,
-    batch_size=64,
-    validation_split=0.1,
-    shuffle=True,
-    verbose=1,
-)
-""")
-
-code("""\
-plt.figure(figsize=(7, 4))
-plt.plot(lstm_history.history["loss"], label="Training loss")
-plt.plot(lstm_history.history["val_loss"], label="Validation loss")
-plt.title("LSTM Autoencoder — Training/Validation Loss (MAE)")
-plt.xlabel("Epoch")
-plt.ylabel("MAE")
-plt.legend()
-plt.show()
-""")
-
-# ---------------------------------------------------------------------------
-# Section 4: Anomaly Detection & Evaluation
-# ---------------------------------------------------------------------------
-md("""\
-## 4. Anomaly Detection & Evaluation
+## 3. Anomaly Detection & Evaluation
 
 ### Theory
 
@@ -383,8 +296,8 @@ struggles to reconstruct (high error) are flagged as anomalies.
 
 **Threshold selection**: we set the decision threshold using only the **training** distribution
 of normal reconstruction errors: `threshold = mean(normal_train_errors) + std(normal_train_errors)`.
-Each model gets its own threshold because their error distributions differ. No test data or
-test labels are used to choose it (avoiding leakage), and it is not tuned on the test set.
+No test data or test labels are used to choose it (avoiding leakage), and it is not tuned on
+the test set.
 
 A test sequence is classified as **anomaly** if its reconstruction error exceeds this threshold.
 """)
@@ -392,39 +305,24 @@ A test sequence is classified as **anomaly** if its reconstruction error exceeds
 code("""\
 def reconstruction_error(model, data):
     reconstructions = model.predict(data, verbose=0)
-    return np.mean(np.abs(data - reconstructions), axis=1).reshape(-1)
+    return np.mean(np.abs(data - reconstructions), axis=1)
 
-# --- Dense AE ---
-dense_train_errors = reconstruction_error(dense_autoencoder, normal_train)
-dense_test_errors = reconstruction_error(dense_autoencoder, test_data)
-dense_threshold = dense_train_errors.mean() + dense_train_errors.std()
+train_errors = reconstruction_error(dense_autoencoder, normal_train)
+test_errors = reconstruction_error(dense_autoencoder, test_data)
+threshold = train_errors.mean() + train_errors.std()
 
-# --- LSTM AE ---
-lstm_train_recon = lstm_autoencoder.predict(normal_train_lstm, verbose=0).reshape(normal_train.shape)
-lstm_train_errors = np.mean(np.abs(normal_train - lstm_train_recon), axis=1)
-lstm_test_recon = lstm_autoencoder.predict(test_data_lstm, verbose=0).reshape(test_data.shape)
-lstm_test_errors = np.mean(np.abs(test_data - lstm_test_recon), axis=1)
-lstm_threshold = lstm_train_errors.mean() + lstm_train_errors.std()
-
-print(f"Dense AE threshold: {dense_threshold:.4f}")
-print(f"LSTM AE threshold:  {lstm_threshold:.4f}")
+print(f"Dense AE threshold: {threshold:.4f}")
 """)
 
 code("""\
-fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-
-for ax, errors, thresh, title in [
-    (axes[0], dense_test_errors, dense_threshold, "Dense AE"),
-    (axes[1], lstm_test_errors, lstm_threshold, "LSTM AE"),
-]:
-    ax.hist(errors[test_labels == 1], bins=50, alpha=0.6, label="Normal")
-    ax.hist(errors[test_labels == 0], bins=50, alpha=0.6, label="Abnormal")
-    ax.axvline(thresh, color="red", linestyle="--", label=f"Threshold = {thresh:.3f}")
-    ax.set_title(f"{title} — Reconstruction Error Distribution")
-    ax.set_xlabel("Reconstruction error (MAE)")
-    ax.set_ylabel("Count")
-    ax.legend()
-
+plt.figure(figsize=(7, 4))
+plt.hist(test_errors[test_labels == 1], bins=50, alpha=0.6, label="Normal")
+plt.hist(test_errors[test_labels == 0], bins=50, alpha=0.6, label="Abnormal")
+plt.axvline(threshold, color="red", linestyle="--", label=f"Threshold = {threshold:.3f}")
+plt.title("Dense AE — Reconstruction Error Distribution")
+plt.xlabel("Reconstruction error (MAE)")
+plt.ylabel("Count")
+plt.legend()
 plt.tight_layout()
 plt.show()
 """)
@@ -435,7 +333,7 @@ md("""\
 Recall that `test_labels == 1` means *normal* and `test_labels == 0` means *abnormal*. A
 predicted **anomaly** occurs when reconstruction error exceeds the threshold, so we map that to
 `prediction == 0` (abnormal) to align with the label convention, then compute standard
-classification metrics.
+classification metrics with **abnormal as the positive class** (`pos_label=0`).
 """)
 
 code("""\
@@ -443,42 +341,24 @@ def classify(errors, threshold):
     # error > threshold -> predicted abnormal (0), else predicted normal (1)
     return (errors <= threshold).astype("int32")
 
-dense_preds = classify(dense_test_errors, dense_threshold)
-lstm_preds = classify(lstm_test_errors, lstm_threshold)
+preds = classify(test_errors, threshold)
 
-def report_metrics(name, y_true, y_pred):
-    acc = accuracy_score(y_true, y_pred)
-    prec = precision_score(y_true, y_pred, pos_label=0)   # positive class = abnormal
-    rec = recall_score(y_true, y_pred, pos_label=0)
-    f1 = f1_score(y_true, y_pred, pos_label=0)
-    print(f"--- {name} ---")
-    print(f"Accuracy:  {acc:.4f}")
-    print(f"Precision (abnormal): {prec:.4f}")
-    print(f"Recall (abnormal):    {rec:.4f}")
-    print(f"F1 (abnormal):        {f1:.4f}")
-    print()
-    return {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
-
-dense_metrics = report_metrics("Dense Autoencoder", test_labels, dense_preds)
-lstm_metrics = report_metrics("LSTM Autoencoder", test_labels, lstm_preds)
+acc = accuracy_score(test_labels, preds)
+prec = precision_score(test_labels, preds, pos_label=0)   # positive class = abnormal
+rec = recall_score(test_labels, preds, pos_label=0)
+f1 = f1_score(test_labels, preds, pos_label=0)
+print(f"Accuracy:             {acc:.4f}")
+print(f"Precision (abnormal): {prec:.4f}")
+print(f"Recall (abnormal):    {rec:.4f}")
+print(f"F1 (abnormal):        {f1:.4f}")
 """)
 
 code("""\
-fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
-
 ConfusionMatrixDisplay(
-    confusion_matrix(test_labels, dense_preds, labels=[0, 1]),
+    confusion_matrix(test_labels, preds, labels=[0, 1]),
     display_labels=["Abnormal", "Normal"]
-).plot(ax=axes[0], colorbar=False)
-axes[0].set_title("Dense AE — Confusion Matrix")
-
-ConfusionMatrixDisplay(
-    confusion_matrix(test_labels, lstm_preds, labels=[0, 1]),
-    display_labels=["Abnormal", "Normal"]
-).plot(ax=axes[1], colorbar=False)
-axes[1].set_title("LSTM AE — Confusion Matrix")
-
-plt.tight_layout()
+).plot(colorbar=False)
+plt.title("Dense AE — Confusion Matrix")
 plt.show()
 """)
 
@@ -486,144 +366,91 @@ md("""\
 ### ROC curve and AUC
 
 The ROC curve sweeps the anomaly threshold across all possible values and plots the true
-positive rate vs. false positive rate for detecting the abnormal class — this gives a
-threshold-independent view of each model's separative power, summarized by the AUC. The raw
-reconstruction error is used as the anomaly score (higher error = more anomalous) with
-"abnormal" as the positive class; scores are not altered in any way.
+positive rate vs. false positive rate for detecting the abnormal class — a threshold-independent
+view of the model's separative power, summarized by the AUC. The raw reconstruction error is
+used as the anomaly score (higher error = more anomalous) with "abnormal" as the positive
+class; scores are not altered in any way.
 """)
 
 code("""\
 # Use (1 - label) as the "is abnormal" indicator, and raw reconstruction error as the score
-dense_fpr, dense_tpr, _ = roc_curve(1 - test_labels, dense_test_errors)
-dense_auc = auc(dense_fpr, dense_tpr)
-
-lstm_fpr, lstm_tpr, _ = roc_curve(1 - test_labels, lstm_test_errors)
-lstm_auc = auc(lstm_fpr, lstm_tpr)
+fpr, tpr, _ = roc_curve(1 - test_labels, test_errors)
+roc_auc = auc(fpr, tpr)
 
 plt.figure(figsize=(6, 6))
-plt.plot(dense_fpr, dense_tpr, label=f"Dense AE (AUC = {dense_auc:.3f})")
-plt.plot(lstm_fpr, lstm_tpr, label=f"LSTM AE (AUC = {lstm_auc:.3f})")
+plt.plot(fpr, tpr, label=f"Dense AE (AUC = {roc_auc:.3f})")
 plt.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Random guess")
 plt.xlabel("False Positive Rate")
 plt.ylabel("True Positive Rate")
-plt.title("ROC Curve — Dense AE vs LSTM AE")
+plt.title("ROC Curve — Dense AE")
 plt.legend()
 plt.show()
 
-print(f"Dense AE AUC: {dense_auc:.4f}")
-print(f"LSTM AE AUC:  {lstm_auc:.4f}")
+print(f"Dense AE AUC: {roc_auc:.4f}")
 """)
 
 # ---------------------------------------------------------------------------
-# Section 5: Visualization
+# Section 4: Visualization
 # ---------------------------------------------------------------------------
 md("""\
-## 5. Visualization
+## 4. Visualization
 
 ### Original vs. reconstructed sequences
 
-Plotting a few normal and abnormal test examples overlaid with their reconstructions makes the
-reconstruction gap directly visible: normal sequences should track their reconstruction closely,
-while abnormal sequences should show a clear mismatch.
+Overlaying a few normal and abnormal test examples with their reconstructions makes the
+reconstruction gap directly visible.
 """)
 
 code("""\
-def plot_reconstructions(model, data_flat, data_model_input, labels, model_name, n=3, is_lstm=False):
+def plot_reconstructions(model, data, labels, n=3):
     normal_idx = np.where(labels == 1)[0][:n]
     abnormal_idx = np.where(labels == 0)[0][:n]
 
     fig, axes = plt.subplots(2, n, figsize=(4 * n, 6))
-    fig.suptitle(f"{model_name} — Original vs Reconstructed", fontsize=14)
+    fig.suptitle("Dense Autoencoder — Original vs Reconstructed", fontsize=14)
 
-    for col, idx in enumerate(normal_idx):
-        original = data_flat[idx]
-        recon_input = data_model_input[idx:idx+1]
-        recon = model.predict(recon_input, verbose=0).reshape(-1)
-        axes[0, col].plot(original, label="Original")
-        axes[0, col].plot(recon, label="Reconstructed", linestyle="--")
-        axes[0, col].set_title("Normal example")
-        axes[0, col].legend(fontsize=8)
-
-    for col, idx in enumerate(abnormal_idx):
-        original = data_flat[idx]
-        recon_input = data_model_input[idx:idx+1]
-        recon = model.predict(recon_input, verbose=0).reshape(-1)
-        axes[1, col].plot(original, label="Original")
-        axes[1, col].plot(recon, label="Reconstructed", linestyle="--")
-        axes[1, col].set_title("Abnormal example")
-        axes[1, col].legend(fontsize=8)
+    for row, indices, title in [(0, normal_idx, "Normal example"),
+                                (1, abnormal_idx, "Abnormal example")]:
+        for col, idx in enumerate(indices):
+            recon = model.predict(data[idx:idx+1], verbose=0).reshape(-1)
+            axes[row, col].plot(data[idx], label="Original")
+            axes[row, col].plot(recon, label="Reconstructed", linestyle="--")
+            axes[row, col].set_title(title)
+            axes[row, col].legend(fontsize=8)
 
     plt.tight_layout()
     plt.show()
 
-plot_reconstructions(dense_autoencoder, test_data, test_data, test_labels, "Dense Autoencoder")
-plot_reconstructions(lstm_autoencoder, test_data, test_data_lstm, test_labels, "LSTM Autoencoder")
-""")
-
-md("""\
-### Side-by-side performance comparison
-""")
-
-code("""\
-metrics_names = ["accuracy", "precision", "recall", "f1"]
-dense_values = [dense_metrics[m] for m in metrics_names]
-lstm_values = [lstm_metrics[m] for m in metrics_names]
-
-x = np.arange(len(metrics_names))
-width = 0.35
-
-plt.figure(figsize=(8, 5))
-plt.bar(x - width/2, dense_values, width, label="Dense AE")
-plt.bar(x + width/2, lstm_values, width, label="LSTM AE")
-plt.xticks(x, [m.capitalize() for m in metrics_names])
-plt.ylabel("Score")
-plt.title("Dense AE vs LSTM AE — Performance Comparison")
-plt.ylim(0, 1.05)
-plt.legend()
-plt.show()
+plot_reconstructions(dense_autoencoder, test_data, test_labels)
 """)
 
 # ---------------------------------------------------------------------------
-# Section 6: Conclusion
+# Section 5: Conclusion
 # ---------------------------------------------------------------------------
-code("""\
-# Data-driven summary: derived from the metrics computed above, nothing hardcoded
-for metric, d, l in [("AUC", dense_auc, lstm_auc),
-                     ("F1 (abnormal)", dense_metrics["f1"], lstm_metrics["f1"]),
-                     ("Recall (abnormal)", dense_metrics["recall"], lstm_metrics["recall"])]:
-    better = "Dense" if d > l else "LSTM" if l > d else "Neither"
-    print(f"{metric}: Dense={d:.4f}  LSTM={l:.4f}  -> higher: {better}")
-""")
-
 md("""\
-## 6. Conclusion
+## 5. Conclusion
 
-**Summary.** Both autoencoders were trained exclusively on normal ECG heartbeats, with the
-scaler and the threshold derived from normal training data only, and reconstruction error was
-used as the anomaly score. The summary cell above states which model scored higher on each
-metric for *this run*. We do **not** assume the LSTM is better; differences of a fraction of a
-percent come from a single seed / single split and may not be significant.
-
-**Why the LSTM does not necessarily win here.** An LSTM can model temporal order, which is
-attractive for ECG, but ECG5000 beats are short (140 steps), pre-segmented and aligned, so
-position-wise patterns are already informative for a Dense network. The LSTM is also harder to
-optimize and slower to train.
+**Summary.** The Dense autoencoder was trained exclusively on normal ECG heartbeats, with the
+scaler and the threshold derived from normal training data only. Reconstruction error (MAE)
+was used as the anomaly score. The metrics printed above are the results of this run; they are
+not hardcoded anywhere in the notebook.
 
 **Limitations.**
-- **Threshold sensitivity**: `mean + std` of normal training error is a simple heuristic; with
-  it, some normal beats are always flagged (false positives). Other choices (percentile,
-  validation-tuned) trade precision and recall differently.
+- **Threshold sensitivity**: `mean + std` of normal training error is a simple heuristic, and it
+  is computed on the same normal data the model was fitted on, so those errors can be slightly
+  optimistic. Some normal beats are always flagged (false positives).
 - **Test-set mix**: the test set is the 20% held-out normal beats plus *all* abnormal beats, so
   accuracy and precision depend on that mix. Prefer recall, F1 and AUC.
 - **Dataset simplicity**: ECG5000 is pre-segmented and clean; results are **not** clinical-grade
-  and this is not a diagnostic system.
+  and this is an experimental/educational project, not a diagnostic system.
 - **Single-class collapse**: abnormal labels 2-5 are merged; per-class detection is not analysed.
-- **Single run**: one seed and one split; no confidence intervals. No hyperparameter search.
+- **Single run**: one seed and one split; no confidence intervals; no hyperparameter search.
 - **Reproducibility**: seeds fixed and deterministic ops enabled, but results may still differ
   slightly across hardware / library versions.
 
-**Future improvements.** Multiple seeds / cross-validation, per-class analysis, validation-based
-threshold selection, convolutional or variational autoencoders, noisier real-world ECG.
+**Future improvements.** Validation-based threshold selection, multiple seeds /
+cross-validation, per-class analysis, convolutional or variational autoencoders, noisier
+real-world ECG.
 """)
 
 nb["cells"] = cells

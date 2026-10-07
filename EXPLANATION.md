@@ -1,123 +1,122 @@
 # Explanation: How the Code Works & How Detection Works
 
 This document walks through the codebase (`src/`, `main.py`, `ecg_anomaly_detection.ipynb`)
-and explains the mechanics behind ECG anomaly detection with autoencoders.
+and explains the mechanics behind ECG anomaly detection with a Dense autoencoder.
 
-## 1. The dataset (`src/data.py`)
+> Experimental / educational project. Not a clinical diagnostic system.
 
-ECG5000 is a CSV of 4998 heartbeats. Each row is 140 time-step values (one heartbeat waveform)
-plus a label in the last column: `1` = normal, `2`-`5` = different kinds of abnormal beats.
+## 1. The dataset and preprocessing (`src/data.py`)
 
-`load_dataset()`:
-1. Downloads the CSV directly from Google's storage bucket.
-2. Splits each row into a 140-value sequence + a binary label (`1` if original label was `1`,
-   else `0`) — we collapse all abnormal subtypes into one class since the goal is binary
-   normal-vs-anomaly detection, not multi-class diagnosis.
-3. Splits the **normal** sequences (raw, unscaled) into 80% train / 20% held-out normal test.
-   Abnormal sequences are **never** included in training — they only appear in `test_data`.
-4. Fits min-max scaling (`fit_min_max`) on the **normal training split only**, then applies those
-   same min/max values to train, held-out normal and abnormal data (no leakage). Test values can
-   therefore fall slightly outside `[0, 1]`; they are not clipped. (An earlier version computed
-   min/max on the whole dataset before splitting; this was corrected.)
+ECG5000 is a CSV of 4998 heartbeats. Each row is 140 values (one heartbeat waveform) plus a
+label in the last column: `1` = normal, `2`-`5` = different kinds of abnormal beats.
 
-This last point is the core trick of the whole project, explained in Section 3.
+`load_dataset()` does, in this order:
+1. Downloads the CSV from Google's storage bucket.
+2. Separates the 140 values from the label, and converts the label to binary
+   (`1` = normal, `0` = abnormal; abnormal subtypes 2-5 are merged).
+3. Separates normal and abnormal sequences.
+4. Splits the **normal** sequences (raw, unscaled) into 80% train / 20% held-out normal test.
+   Abnormal sequences are **never** part of training.
+5. Fits min-max scaling (`fit_min_max`) on the **normal training split only**. One global
+   min and one global max are used, so the shape of each beat is preserved.
+6. Applies those same min/max values (`min_max_scale`) to train, held-out normal and abnormal
+   data. Test data is only transformed, never used to fit. Test values can fall slightly
+   outside `[0, 1]`; they are not clipped. (An earlier version computed min/max on the whole
+   dataset before splitting; this was corrected.)
+7. Builds the test set: held-out normal (label 1) + all abnormal (label 0).
 
-## 2. The models (`src/models.py`)
+The fitted `(x_min, x_max)` is returned so the same scaling can be applied to any new ECG.
+
+## 2. The model (`src/models.py`)
 
 An **autoencoder** is a neural network trained to reconstruct its own input:
-`decoder(encoder(x)) ≈ x`. The encoder compresses the input down to a small **bottleneck**
-(a low-dimensional latent vector), and the decoder expands that bottleneck back out. Because
-the bottleneck is much smaller than the input, the network is forced to learn only the most
-important, generalizable patterns in the data — it physically cannot memorize every input
-value independently.
+`decoder(encoder(x)) ≈ x`. The encoder compresses the input into a small **bottleneck**, and
+the decoder expands it back. Because the bottleneck is much smaller than the input, the
+network must learn the general pattern of what it was trained on.
 
-### Dense autoencoder
-`build_dense_autoencoder()` builds a plain fully-connected encoder/decoder:
-`140 → 64 → 32 → 16` (encoder) and `16 → 32 → 64 → 140` (decoder). The Dense
-Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly model
-temporal dependencies between consecutive time steps.
+`build_dense_autoencoder()` builds a fully-connected encoder/decoder:
 
-### LSTM autoencoder
-`build_lstm_autoencoder()` instead treats the input as a genuine time series:
-- **Encoder**: two stacked `LSTM` layers read the sequence step by step, maintaining a hidden
-  state that gets updated at every time step. The final hidden state (size `latent_dim=16`) is
-  the compressed representation — but unlike the dense model's bottleneck, this vector was built
-  by processing the sequence *in order*.
-- **RepeatVector**: copies that single latent vector 140 times, producing an input sequence the
-  decoder LSTMs can consume one step at a time.
-- **Decoder**: two more `LSTM` layers unroll the repeated latent vector back into a 140-step
-  sequence, and a `TimeDistributed(Dense(1))` layer maps each time step's LSTM output to a
-  single reconstructed value.
+`140 → 64 → 32 → 16 → 32 → 64 → 140`
 
-Both models are compiled with `loss="mae"` (mean absolute error) so their reconstruction errors
-are directly comparable.
+- Hidden layers: ReLU. Output layer: sigmoid (inputs are scaled to about `[0, 1]`).
+- Loss: MAE. Optimizer: Adam.
+- Input and output shape: `(samples, 140)`.
+
+The Dense Autoencoder treats the ECG as a fixed-length feature vector and does not explicitly
+model temporal dependencies between consecutive time steps.
 
 ## 3. Why training on normal data only enables anomaly detection
 
-This is the central idea of the whole project (also called "one-class" or "novelty" learning):
+- No abnormal heartbeat is shown to the model during training.
+- Its weights therefore encode what normal heartbeats look like.
+- At test time, abnormal beats are typically reconstructed worse, giving a higher
+  **reconstruction error**: `mean(|input - reconstruction|)` per sequence
+  (`src/evaluate.py: reconstruction_error`).
+- Held-out normal beats come from the same distribution as training data, so they usually
+  reconstruct well (low error).
 
-- We never show the model a single abnormal heartbeat during training.
-- The autoencoder's weights therefore only encode *what normal heartbeats look like and how
-  to reconstruct them accurately*.
-- At test time, we feed the model heartbeats it may have never seen the shape of (abnormal
-  ones). Since its internal representation has no capacity for those patterns, its
-  reconstruction of an abnormal input will typically be worse — it "falls back" toward
-  something resembling a normal heartbeat, producing a visible mismatch from the true abnormal
-  input.
-- We measure that mismatch as **reconstruction error**: `mean(|input - reconstruction|)` per
-  sequence (`src/evaluate.py: reconstruction_error`).
-- Normal test sequences (which the model never trained on directly, but which come from the same
-  distribution as training data) still reconstruct well → low error.
-- Abnormal test sequences → higher error.
+This gives anomaly detection without labeled abnormal training examples. Labels are only used
+to evaluate.
 
-This means we get anomaly detection **without ever needing labeled abnormal training examples**
-— only enough labeled test data to validate the approach.
-
-## 4. Picking a threshold and classifying (`src/evaluate.py`)
+## 4. Threshold and classification (`src/evaluate.py`)
 
 `pick_threshold()` computes `threshold = mean(train_errors) + std(train_errors)`, using only
-the reconstruction errors of the **normal training data**. This keeps the threshold decision
-free of any information from the labeled test set (no leakage) while still being grounded in
-what "normal" reconstruction error looks like.
+the reconstruction errors of the **normal training data**. No test data, test reconstruction
+errors or test labels are used, and the threshold is not tuned on the test set.
 
-`classify()` then labels any test sequence with `error > threshold` as an anomaly.
+`classify()` labels a sequence anomaly (0) if `error > threshold`, else normal (1).
 
-`compute_metrics()` reports accuracy/precision/recall/F1 with the **abnormal class as positive**
-(`pos_label=0`), since detecting anomalies is the actual goal — a model that misses abnormal
-beats is the failure mode we care about most.
+`compute_metrics()` reports accuracy, precision, recall, F1 and the confusion matrix with the
+**abnormal class as positive** (`pos_label=0`).
 
-`compute_roc()` sweeps every possible threshold and plots true-positive-rate vs.
-false-positive-rate for detecting abnormal beats, summarized by AUC — a threshold-independent
-measure of how well each model's error distributions separate normal from abnormal.
+`compute_roc()` uses the raw reconstruction error as the anomaly score (higher = more
+anomalous), with abnormal as the positive class, and reports ROC/AUC, a threshold-independent
+measure of separation.
 
-## 5. Actual results from a full run
+## 5. Training configuration (`main.py`)
 
-Produced by `python3 main.py` (seed 42, TensorFlow deterministic ops, CPU), saved in
-`output/metrics.json`. Abnormal is the positive class.
+Seed 42 (Python, NumPy, TensorFlow, deterministic ops enabled), 100 epochs, batch size 128,
+`validation_split=0.1` (the last 10% of the normal training data; no abnormal data).
+Exact numbers can still vary slightly across hardware / library versions.
 
-| Metric | Dense AE | LSTM AE |
-|---|---|---|
-| Threshold | 0.0187 | 0.0392 |
-| Accuracy | 0.9752 | 0.8306 |
-| Precision (abnormal) | 0.9714 | 0.9700 |
-| Recall (abnormal) | 0.9976 | 0.8081 |
-| F1 (abnormal) | 0.9843 | 0.8817 |
-| AUC | 0.9894 | 0.9241 |
+## 6. Actual results from a full run
 
-Confusion matrices (rows = true, columns = predicted; order abnormal, normal):
-Dense `[[2074, 5], [61, 523]]`, LSTM `[[1680, 399], [52, 532]]`.
+Produced by `python3 main.py` (seed 42, CPU), saved to `output/metrics.json`. Abnormal is the
+positive class.
 
-**Dense vs LSTM.** In this run the Dense AE clearly outperforms the LSTM AE. The LSTM's final
-validation MAE (0.0305) is also much higher than the Dense AE's (0.0130), i.e. the LSTM
-reconstructs normal beats less well, so its `mean + std` threshold (0.0392) is high and it
-misses many abnormal beats (recall 0.81). Earlier README numbers (LSTM accuracy
-≈ 0.977, AUC ≈ 0.974) came from an older version (global scaling, non-deterministic run) and
-were **not** reproduced after the leakage fix and determinism changes. LSTM training with `relu`
-activations is sensitive to initialization, so results from a single seed are not conclusive; no
-tuning was done to improve the numbers. We therefore make **no claim that LSTM beats Dense**.
+| Metric | Dense AE |
+|---|---|
+| Threshold | 0.0187 |
+| Accuracy | 0.9752 |
+| Precision (abnormal) | 0.9714 |
+| Recall (abnormal) | 0.9976 |
+| F1 (abnormal) | 0.9843 |
+| AUC | 0.9894 |
 
-## 6. `main.py` — orchestration
+Confusion matrix (rows = true, columns = predicted; order abnormal, normal): `[[2074, 5], [61, 523]]`.
 
-`main.py` strings the above pieces together end to end: load data → train Dense AE → train
-LSTM AE → compute thresholds/metrics/ROC for both → save loss curves and ROC comparison plots to
-`./output/`. It's the `.py`-script equivalent of running the notebook top to bottom.
+These come from the pipeline with scaling fitted on normal training data only. Earlier
+documented numbers (Dense accuracy ≈ 0.9775, AUC ≈ 0.9905) came from the previous pipeline that
+scaled before splitting; they are superseded by the table above.
+
+## 7. Limitations
+
+- The threshold is a simple heuristic computed from errors on the same normal data the model
+  was fitted on, which can be slightly optimistic. A validation-based threshold would estimate
+  the normal error distribution on data not used to fit the model.
+- The test set is held-out normal beats plus all abnormal beats, so accuracy and precision
+  depend on that mix. Recall, F1 and AUC are more informative.
+- One seed and one split; no confidence intervals; no hyperparameter search.
+- Abnormal subtypes are merged; per-class detection is not analysed.
+- ECG5000 is clean and pre-segmented. Results are not clinical-grade.
+
+## 8. Future improvements
+
+Validation-based threshold, multiple seeds / cross-validation, per-class analysis,
+convolutional or variational autoencoders, noisier real-world ECG.
+
+## 9. `main.py` — orchestration
+
+Seeds → load/split/scale → build Dense AE → train on normal data → reconstruction errors on
+train and test → threshold from train errors → classify → metrics, ROC/AUC → save loss curve,
+ROC plot and `metrics.json` to `./output/`.

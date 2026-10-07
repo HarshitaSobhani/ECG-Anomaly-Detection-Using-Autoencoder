@@ -29,27 +29,33 @@ def to_sequences_and_labels(df: pd.DataFrame):
 
 
 def fit_min_max(train: np.ndarray) -> tuple[float, float]:
-    """Min/max of the TRAINING data only (so no test information leaks in)."""
+    """Global min/max of the NORMAL TRAINING data only (no test information)."""
     return float(train.min()), float(train.max())
 
 
 def min_max_scale(x: np.ndarray, x_min: float, x_max: float) -> np.ndarray:
-    """Scale with given parameters. Test values may fall slightly outside [0, 1]."""
+    """Scale with already-fitted parameters. Never refit on test data."""
     return (x - x_min) / (x_max - x_min)
 
 
 def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
-    """Returns (normal_train, test_data, test_labels, normal_data, abnormal_data).
+    """Returns (normal_train, test_data, test_labels, scaler_params).
 
     Order of operations (no leakage):
-      1. split the raw NORMAL sequences into train / held-out normal
-      2. fit min/max on the normal training split only
-      3. apply those same parameters to train, held-out normal and abnormal data
+      1. separate features/labels, make binary labels, split normal vs abnormal
+      2. split the raw NORMAL sequences into train / held-out normal test
+      3. fit the min/max ONLY on the normal training split
+      4. apply those same parameters to train, held-out normal and abnormal data
 
-    normal_train:  scaled normal sequences, used to train the autoencoders.
+    normal_train: scaled normal sequences, used to train the autoencoder.
     test_data/test_labels: held-out normal (label 1) + all abnormal (label 0)
                            sequences, used only for evaluation.
-    normal_data / abnormal_data: all scaled normal / abnormal sequences (plots only).
+    scaler_params: (x_min, x_max) fitted on the training data; reuse with
+                   min_max_scale() to transform any new ECG.
+    Test values may fall slightly outside [0, 1]; they are not clipped.
+
+    A single global min/max is used (not one per time step) so the shape of
+    each heartbeat is preserved exactly.
     """
     df = load_raw(url)
     sequences, binary_labels = to_sequences_and_labels(df)
@@ -60,17 +66,17 @@ def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
     raw_train, raw_normal_test = train_test_split(
         raw_normal, test_size=test_size, random_state=seed
     )
-    x_min, x_max = fit_min_max(raw_train)
+
+    x_min, x_max = fit_min_max(raw_train)  # normal training data only
 
     normal_train = min_max_scale(raw_train, x_min, x_max)
     normal_test = min_max_scale(raw_normal_test, x_min, x_max)
-    abnormal_data = min_max_scale(raw_abnormal, x_min, x_max)
-    normal_data = min_max_scale(raw_normal, x_min, x_max)
+    abnormal_test = min_max_scale(raw_abnormal, x_min, x_max)
 
-    test_data = np.concatenate([normal_test, abnormal_data], axis=0)
+    test_data = np.concatenate([normal_test, abnormal_test], axis=0)
     test_labels = np.concatenate([
         np.ones(len(normal_test), dtype="int32"),
-        np.zeros(len(abnormal_data), dtype="int32"),
+        np.zeros(len(abnormal_test), dtype="int32"),
     ])
 
-    return normal_train, test_data, test_labels, normal_data, abnormal_data
+    return normal_train, test_data, test_labels, (x_min, x_max)
