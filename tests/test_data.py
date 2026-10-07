@@ -45,3 +45,4 @@ def test_scaler_fit_on_normal_train_only(monkeypatch):
     assert normal_train.min() == 0.0 and normal_train.max() == 1.0
     assert test_data.max() > 1.0  # abnormal data scaled with train params, not refit
     assert x_max < 1.0 + 1e-9  # fitted on normal (0-1) data, not on abnormal (0-100)
+

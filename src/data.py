@@ -80,3 +80,4 @@ def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
     ])
 
     return normal_train, test_data, test_labels, (x_min, x_max)
+

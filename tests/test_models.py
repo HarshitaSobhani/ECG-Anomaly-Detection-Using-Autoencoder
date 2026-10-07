@@ -10,3 +10,4 @@ def test_dense_autoencoder_reconstructs_input_shape():
     x = np.random.rand(3, N_TIMESTEPS).astype("float32")
     out = model.predict(x, verbose=0)
     assert out.shape == x.shape
+

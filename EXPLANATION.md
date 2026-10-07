@@ -122,3 +122,4 @@ convolutional or variational autoencoders, noisier real-world ECG.
 Seeds → load/split/scale → build Dense AE → train on normal data → reconstruction errors on
 train and test → threshold from train errors → classify → metrics, ROC/AUC → save loss curve,
 ROC plot and `metrics.json` to `./output/`.
+

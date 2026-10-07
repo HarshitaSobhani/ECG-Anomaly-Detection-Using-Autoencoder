@@ -25,3 +25,4 @@ def build_dense_autoencoder(n_timesteps: int) -> tf.keras.Model:
     model = tf.keras.Sequential([encoder, decoder], name="dense_autoencoder")
     model.compile(optimizer="adam", loss="mae")
     return model
+

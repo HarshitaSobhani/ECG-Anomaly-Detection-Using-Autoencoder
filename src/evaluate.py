@@ -37,3 +37,4 @@ def compute_roc(y_true_labels, errors):
     """ROC/AUC for detecting the abnormal class from raw reconstruction error."""
     fpr, tpr, _ = roc_curve(1 - y_true_labels, errors)
     return fpr, tpr, auc(fpr, tpr)
+

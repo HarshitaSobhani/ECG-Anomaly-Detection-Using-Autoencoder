@@ -60,3 +60,4 @@ def test_compute_roc_perfect_separation_gives_auc_one():
     errors = np.array([0.0, 0.1, 0.9, 1.0])  # abnormal (0) has strictly higher error
     _, _, roc_auc = compute_roc(y_true, errors)
     assert roc_auc == 1.0
+
