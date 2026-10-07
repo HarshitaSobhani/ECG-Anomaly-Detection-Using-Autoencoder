@@ -5,4 +5,4 @@ __pycache__/
 output/
 *.pdf
 .DS_Store
-
+artifacts/

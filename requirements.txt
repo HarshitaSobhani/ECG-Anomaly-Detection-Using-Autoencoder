@@ -5,4 +5,5 @@ scikit-learn
 matplotlib
 jupyter
 nbformat
-
+streamlit
+plotly

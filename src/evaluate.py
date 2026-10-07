@@ -6,10 +6,14 @@ from sklearn.metrics import (
 )
 
 
+def reconstruction_mae(original: np.ndarray, reconstructed: np.ndarray) -> np.ndarray:
+    """Mean absolute error per sequence (one score per row)."""
+    return np.mean(np.abs(original - reconstructed), axis=1)
+
+
 def reconstruction_error(model, data: np.ndarray) -> np.ndarray:
     """Mean absolute error per sequence between original and reconstruction."""
-    reconstructions = model.predict(data, verbose=0)
-    return np.mean(np.abs(data - reconstructions), axis=1)
+    return reconstruction_mae(data, model.predict(data, verbose=0))
 
 
 def pick_threshold(train_errors: np.ndarray) -> float:

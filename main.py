@@ -5,8 +5,9 @@ Trains a Dense autoencoder on normal-only ECG5000 heartbeats, evaluates
 anomaly detection on a held-out mixed test set, and saves plots and
 metrics to ./output/.
 
-This mirrors ecg_anomaly_detection.ipynb; see EXPLANATION.md for the
-theory behind each step.
+Also saves the model, scaler and threshold to ./artifacts/ for the
+real-time demo (`streamlit run realtime_app.py`).
+This mirrors ecg_anomaly_detection.ipynb.
 """
 import json
 import os
@@ -19,6 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.data import load_dataset
+from src.inference import save_artifacts
 from src.models import build_dense_autoencoder
 from src.evaluate import (
     reconstruction_error, pick_threshold, classify, compute_metrics, compute_roc,
@@ -27,6 +29,7 @@ from src.evaluate import (
 # --- Configuration ---
 SEED = 42
 OUTPUT_DIR = "output"
+ARTIFACT_DIR = "artifacts"
 TEST_SIZE = 0.2          # fraction of NORMAL beats held out for testing
 VALIDATION_SPLIT = 0.1   # fraction of normal training data used for validation
 EPOCHS = 100
@@ -51,7 +54,7 @@ def main() -> None:
 
     print("Loading ECG5000 dataset...")
     # Min/max scaling is fitted on normal training data inside load_dataset.
-    normal_train, test_data, test_labels, _scaler_params = load_dataset(
+    normal_train, test_data, test_labels, (x_min, x_max) = load_dataset(
         seed=SEED, test_size=TEST_SIZE
     )
     n_timesteps = normal_train.shape[1]
@@ -90,6 +93,11 @@ def main() -> None:
     }
     with open(f"{OUTPUT_DIR}/metrics.json", "w") as f:
         json.dump(results, f, indent=2)
+
+    # Save everything the real-time app needs (no retraining at inference time).
+    save_artifacts(model, x_min, x_max, threshold, ARTIFACT_DIR,
+                   seed=SEED, test_size=TEST_SIZE)
+    print(f"Saved inference artifacts to ./{ARTIFACT_DIR}/")
 
     # --- Plots ---
     plt.figure(figsize=(7, 4))

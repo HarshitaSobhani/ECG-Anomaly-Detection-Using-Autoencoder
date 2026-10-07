@@ -38,6 +38,39 @@ def min_max_scale(x: np.ndarray, x_min: float, x_max: float) -> np.ndarray:
     return (x - x_min) / (x_max - x_min)
 
 
+def split_raw(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
+    """Raw (unscaled) split: (raw_train, raw_normal_test, raw_abnormal).
+
+    Only normal sequences are split into train / held-out test. Abnormal
+    sequences are never part of training.
+    """
+    df = load_raw(url)
+    sequences, binary_labels = to_sequences_and_labels(df)
+
+    raw_normal = sequences[binary_labels == 1]
+    raw_abnormal = sequences[binary_labels == 0]
+
+    raw_train, raw_normal_test = train_test_split(
+        raw_normal, test_size=test_size, random_state=seed
+    )
+    return raw_train, raw_normal_test, raw_abnormal
+
+
+def load_raw_test_set(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
+    """Unscaled test set (held-out normal + all abnormal) and its labels.
+
+    Used by the real-time demo, which applies the SAVED scaler itself.
+    Returns (raw_test_data, test_labels) with 1 = normal, 0 = abnormal.
+    """
+    _, raw_normal_test, raw_abnormal = split_raw(seed, test_size, url)
+    raw_test = np.concatenate([raw_normal_test, raw_abnormal], axis=0)
+    labels = np.concatenate([
+        np.ones(len(raw_normal_test), dtype="int32"),
+        np.zeros(len(raw_abnormal), dtype="int32"),
+    ])
+    return raw_test, labels
+
+
 def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
     """Returns (normal_train, test_data, test_labels, scaler_params).
 
@@ -57,15 +90,7 @@ def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
     A single global min/max is used (not one per time step) so the shape of
     each heartbeat is preserved exactly.
     """
-    df = load_raw(url)
-    sequences, binary_labels = to_sequences_and_labels(df)
-
-    raw_normal = sequences[binary_labels == 1]
-    raw_abnormal = sequences[binary_labels == 0]
-
-    raw_train, raw_normal_test = train_test_split(
-        raw_normal, test_size=test_size, random_state=seed
-    )
+    raw_train, raw_normal_test, raw_abnormal = split_raw(seed, test_size, url)
 
     x_min, x_max = fit_min_max(raw_train)  # normal training data only
 
@@ -80,4 +105,3 @@ def load_dataset(seed: int = 42, test_size: float = 0.2, url: str = DATA_URL):
     ])
 
     return normal_train, test_data, test_labels, (x_min, x_max)
-

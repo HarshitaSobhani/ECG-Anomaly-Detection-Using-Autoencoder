@@ -15,6 +15,8 @@ See [`EXPLANATION.md`](EXPLANATION.md) for a full walkthrough.
 - `src/data.py` — download, split, train-fitted min-max scaling, test-set construction.
 - `src/models.py` — Dense autoencoder.
 - `src/evaluate.py` — reconstruction error, thresholding, metrics, ROC/AUC.
+- `src/inference.py` — saved artifacts, validation and single-heartbeat inference.
+- `realtime_app.py` — Streamlit real-time demo.
 
 ## Dataset
 
@@ -76,6 +78,76 @@ AUC 0.9894; saved to `output/metrics.json`). Exact numbers may vary slightly wit
 library version even with fixed seeds and
 deterministic ops. These numbers come from the corrected train-fitted-scaling pipeline; older
 figures from the previous pipeline are superseded. Metrics are saved to `output/metrics.json`.
+
+## Real-Time Demo
+
+An addition to the project: the trained Dense Autoencoder is used for real-time **inference**
+in a Streamlit app. The methodology (architecture, MAE, mean + std threshold, train-fitted
+scaling) is unchanged.
+
+### Training
+
+```bash
+python3 main.py
+```
+
+Trains the existing Dense Autoencoder, prints the metrics, and saves the inference artifacts
+to `artifacts/`: `dense_autoencoder.keras` (model), `scaler.json` (`x_min`, `x_max` fitted on
+normal training data, plus the split seed/size) and `threshold.json` (the mean + std
+threshold from `pick_threshold`). Nothing is hardcoded.
+
+### Start the application
+
+```bash
+pip install -r requirements.txt
+streamlit run realtime_app.py
+```
+
+The app loads the saved model, scaler and threshold and performs inference **without
+retraining**. If `artifacts/` is missing it shows an error asking you to run `python3 main.py`.
+
+### Real-Time Detection
+
+```
+ECG heartbeat -> preprocessing (saved x_min/x_max) -> Dense Autoencoder -> reconstruction
+              -> MAE -> saved threshold -> NORMAL / ANOMALY
+```
+
+Each heartbeat is processed individually (`src/inference.py`). Controls: START / STOP
+real-time detection, NEXT HEARTBEAT, RESET SESSION.
+
+### Visualization
+
+The app shows the original and reconstructed ECG waveform on the same axes, the
+reconstruction error, the threshold, the prediction, and running statistics (processed beats,
+anomalies detected). Ground truth labels, when available, are shown as "evaluation only" and
+are never passed to the model.
+
+### ECG5000 Simulation
+
+The held-out ECG5000 test heartbeats (same split as `main.py`) are fed sequentially, roughly
+one per second. This is a real-time inference **simulation**, not live physiological hardware.
+
+### External CSV
+
+Choose "Upload ECG CSV":
+
+- one heartbeat per row, exactly 140 ECG values (an optional header row is skipped);
+- an optional 141st column is a label (1 = normal, other = abnormal), used for display only;
+- the scaler is **not** refitted: the saved `x_min`/`x_max` are applied;
+- the model expects the same 140-value heartbeat representation as ECG5000.
+
+Wrong column counts, empty files, non-numeric or missing values are rejected with a clear
+message. Data is never truncated or padded.
+
+### Limitations
+
+- Experimental/educational project, not a clinical diagnostic system.
+- The model was trained on ECG5000; external datasets can differ in distribution, so
+  cross-dataset performance must be validated.
+- Arbitrary raw ECG recordings are not converted into heartbeats by this version; only
+  pre-segmented 140-value heartbeats are supported.
+- The model is not clinically validated.
 
 ## Limitations and future work
 
